@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>댓글 유사성 기반 음악 비교 — p5.js (v3.1)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.2/lib/p5.min.js"></script>
+  <style>
+    :root { --bg:#0b0d10; --fg:#e9eef5; --muted:#9fb0c7; --accent:#7aa2ff; --accent2:#ffa97a; }
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,Segoe UI,Apple SD Gothic Neo,Arial,Helvetica,sans-serif}
+    header{padding:16px 20px;border-bottom:1px solid #1b2027}
+    h1{font-size:18px;margin:0 0 6px}
+    .sub{color:var(--muted);font-size:13px}
+    main{display:grid;grid-template-columns:380px 1fr;gap:0}
+    aside{border-right:1px solid #1b2027;height:calc(100vh - 68px);overflow:auto;padding:14px 16px}
+    section{height:calc(100vh - 68px);overflow:auto}
+    label{font-size:12px;color:var(--muted);display:block;margin:14px 0 6px}
+    input,textarea,button{width:100%;box-sizing:border-box;border-radius:10px;border:1px solid #2a3240;background:#131820;color:var(--fg);padding:10px 12px;font-size:13px;outline:none}
+    textarea{min-height:92px;resize:vertical}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .btn{cursor:pointer;border:1px solid #334156;background:linear-gradient(#1a2230,#141b27);transition:transform .05s}
+    .btn:hover{transform:translateY(-1px)}
+    .small{font-size:12px;color:#8aa0be;margin-top:6px}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #2a3240;margin:4px 6px 0 0;font-size:12px}
+    .ok{color:#81fbb8;border-color:#17442b;background:#0f1f19}
+    .warn{color:#ffd18a;border-color:#4a3820;background:#1d170f}
+    .err{color:#ff8aa0;border-color:#4a2030;background:#1d0f15}
+    .cards{display:grid;grid-template-columns:repeat(2,minmax(360px,1fr));gap:12px;padding:12px}
+    .card{background:#0f141c;border:1px solid #1f2733;border-radius:16px;overflow:hidden}
+    .card h3{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid #1b2027;color:#cfe1ff}
+    canvas{display:block}
+    .meta{padding:10px 14px;border-top:1px solid #1b2027;color:#a9bad2;font-size:12px}
+    .hl{color:#cfe1ff}
+    .list{padding:8px 14px 14px;font-size:13px;line-height:1.8;color:#cfd8e6}
+    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;color:#bcd0ff}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>댓글 유사성 기반 음악 비교 (p5.js v3.1)</h1>
+    <div class="sub">두 영상 댓글을 <b>각각 하나의 문서</b>로 보고 TF-IDF + BM25 + Jaccard를 혼합해 유사도를 계산합니다. α, n-gram, 불용어 강도, topK 조정 가능.</div>
+  </header>
+
+  <main>
+    <aside>
+      <label>YouTube Data API 키 (선택)</label>
+      <input id="apiKey" placeholder="API 없이도 아래 JSON으로 분석 가능. API는 http://localhost에서 권장" />
+
+      <div class="row">
+        <div>
+          <label>영상 A ID</label>
+          <input id="vidA" value="JeVmk6SAMvA" />
+          <div class="small">예) https://www.youtube.com/watch?v=<span class="kbd">JeVmk6SAMvA</span></div>
+        </div>
+        <div>
+          <label>영상 B ID</label>
+          <input id="vidB" value="wzvRxguTPa4" />
+          <div class="small">예) https://www.youtube.com/watch?v=<span class="kbd">wzvRxguTPa4</span></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="btnFetch" class="btn">🔎 API로 댓글 가져오기 & 분석</button>
+        <button id="btnAnalyzePasted" class="btn">📝 붙여넣은 댓글로 분석</button>
+      </div>
+
+      <label>붙여넣기 — 댓글 배열(JSON) A</label>
+      <textarea id="jsonA"></textarea>
+
+      <label>붙여넣기 — 댓글 배열(JSON) B</label>
+      <textarea id="jsonB"></textarea>
+
+      <label>옵션</label>
+      <div class="row">
+        <div>
+          <input id="maxComments" type="number" value="200" />
+          <div class="small">가져올 댓글 수(각 영상)</div>
+        </div>
+        <div>
+          <input id="topK" type="number" value="25" />
+          <div class="small">상위 키워드 개수</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <input id="alpha" type="number" value="0.70" step="0.05" min="0" max="1"/>
+          <div class="small">α (TF-IDF 코사인 비중)</div>
+        </div>
+        <div>
+          <input id="gram" type="number" value="2" min="1" max="3"/>
+          <div class="small">n-gram (1~3)</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <input id="stopLevel" type="number" value="1" min="0" max="2"/>
+          <div class="small">불용어 강도(0=약,1=중,2=강)</div>
+        </div>
+      </div>
+
+      <div id="status" class="small" style="margin-top:12px"></div>
+      <div class="small" style="margin-top:6px">
+        <span class="pill ok">TF-IDF</span>
+        <span class="pill ok">BM25</span>
+        <span class="pill ok">Jaccard</span>
+        <span class="pill warn">API는 localhost 권장</span>
+      </div>
+    </aside>
+
+    <section>
+      <div class="cards">
+        <div class="card">
+          <h3>영상 A — 키워드 Top-K</h3>
+          <div id="p5a"></div>
+          <div class="meta" id="metaA"></div>
+        </div>
+        <div class="card">
+          <h3>영상 B — 키워드 Top-K</h3>
+          <div id="p5b"></div>
+          <div class="meta" id="metaB"></div>
+        </div>
+        <div class="card">
+          <h3>공유/고유 키워드 & 유사도</h3>
+          <div id="p5c"></div>
+          <div class="meta" id="metaC"></div>
+        </div>
+        <div class="card">
+          <h3>설명</h3>
+          <div class="list" id="explain"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    /* ========== 1) 토크나이저 + 불용어 ========== */
+    function buildStopSets(level=1){
+      const baseKo=["그리고","그러나","그래서","또","다시","근데","하지만","정말","진짜","그냥","약간","좀","매우","아주"];
+      const softKo=["좋다","좋아요","감동","소름","중독","전설","레전드","명곡","분위기","느낌","노래","가사","보컬","목소리","영상","뮤비"];
+      const hardKo=["최고","대박","미쳤다","최강","가슴","마음","개명곡","진짜로","레전드다"];
+      const ko=new Set([...baseKo,...(level>=1?softKo:[]),...(level>=2?hardKo:[])]);
+      const en=new Set(["a","an","the","is","are","to","of","in","for","on","with","and","or","but","so","very","really","just","only","more","most","less","this","that","these","those","i","me","my","we","our","you","your","he","she","it","they","them","his","her","its","their",...(level>=1?["song","music","lyrics","voice","legend"]:[]),...(level>=2?["best","amazing","awesome","nice"]:[])]);
+      return {ko,en};
+    }
+    function tokenizeBase(s){
+      return s.toLowerCase()
+        .replace(/https?:\/\/\S+/g," ")
+        .replace(/[ㄱ-ㅎㅏ-ㅣ]+/g," ")             // ㅋㅋ,ㅎㅎ,ㅠㅠ
+        .replace(/\b\d+(?:년|개월|주|일|th|st|nd|rd)?\b/g," ")
+        .replace(/<[^>]+>/g," ")
+        .replace(/[^\p{L}\s]/gu," ")
+        .split(/\s+/).map(t=>t.trim()).filter(t=>t.length>=2);
+    }
+    function addNgrams(unigrams,n=2){
+      if(n<=1) return unigrams;
+      const grams=[...unigrams];
+      for(let g=2;g<=n;g++){
+        for(let i=0;i+g<=unigrams.length;i++){
+          grams.push(unigrams.slice(i,i+g).join("_")); // 공백 대신 _
+        }
+      }
+      return grams;
+    }
+    function tokenizeWithControls(s, stopLevel=1, gram=2){
+      const {ko,en}=buildStopSets(stopLevel);
+      const uni=tokenizeBase(s).filter(t=>!(ko.has(t)||en.has(t)));
+      return addNgrams(uni,Math.max(1,Math.min(3,gram)));
+    }
+
+    /* ========== 2) TF-IDF (두 문서) ========== */
+    function tfidfTwoDocs(tokensA,tokensB){
+      const mA=new Map(), mB=new Map();
+      tokensA.forEach(t=>mA.set(t,(mA.get(t)||0)+1));
+      tokensB.forEach(t=>mB.set(t,(mB.get(t)||0)+1));
+      const vocab=Array.from(new Set([...mA.keys(),...mB.keys()])).sort();
+
+      // DF & IDF (N=2, smoothing)
+      const N=2, idf=new Map();
+      vocab.forEach(term=>{
+        const df=(mA.has(term)?1:0)+(mB.has(term)?1:0);
+        idf.set(term,Math.log((1+N)/(1+df))+1);
+      });
+
+      // log-normalized TF
+      const vecA=new Float32Array(vocab.length), vecB=new Float32Array(vocab.length);
+      vocab.forEach((term,i)=>{
+        const fA=mA.get(term)||0, fB=mB.get(term)||0;
+        const tfA=fA?(1+Math.log(fA)):0, tfB=fB?(1+Math.log(fB)):0;
+        vecA[i]=tfA*idf.get(term); vecB[i]=tfB*idf.get(term);
+      });
+
+      // L2 normalize
+      function l2(v){let s=0;for(let i=0;i<v.length;i++)s+=v[i]*v[i];const n=Math.sqrt(s)||1;for(let i=0;i<v.length;i++)v[i]/=n;return v;}
+      return {vocab, vecA:l2(vecA), vecB:l2(vecB)};
+    }
+
+    function cosine(a,b){let s=0;const n=Math.min(a.length,b.length);for(let i=0;i<n;i++)s+=a[i]*b[i];return Math.max(0,Math.min(1,s));}
+    function topKFromVector(vocab,vec,k=12){const arr=vocab.map((t,i)=>({term:t,score:vec[i]}));arr.sort((x,y)=>y.score-x.score);return arr.slice(0,k).filter(d=>d.score>0);}
+
+    /* ========== 3) 보조 유사도 ========== */
+    function buildFreq(tokens){const m=new Map();tokens.forEach(t=>m.set(t,(m.get(t)||0)+1));return m;}
+    function jaccard(setA,setB){const A=new Set(setA),B=new Set(setB);let inter=0;A.forEach(x=>{if(B.has(x))inter++;});const uni=A.size+B.size-inter;return uni?inter/uni:0;}
+    function bm25TwoDocs(tokensA,tokensB,k1=1.2,b=0.75){
+      const mA=buildFreq(tokensA), mB=buildFreq(tokensB);
+      const N=2, avgdl=(tokensA.length+tokensB.length)/2;
+      function score(m,dl){
+        let s=0; const vocab=new Set([...mA.keys(),...mB.keys()]);
+        vocab.forEach(term=>{
+          const df=(mA.has(term)?1:0)+(mB.has(term)?1:0);
+          const idf=Math.log((N-df+0.5)/(df+0.5)+1);
+          const f=m.get(term)||0;
+          const denom=f+k1*(1-b+b*dl/avgdl);
+          s+=idf*(f*(k1+1))/(denom||1);
+        });
+        return s;
+      }
+      const sA=score(mA,tokensA.length), sB=score(mB,tokensB.length);
+      const sigmoid=x=>1/(1+Math.exp(-x/10));
+      return (sigmoid(sA)+sigmoid(sB))/2; // 0~1로 압축
+    }
+
+    /* ========== 4) p5 시각화 ========== */
+    function barSketchFactory(data,mountId,palette='A'){
+      return (p)=>{
+        const PAD=18,BARH=22;
+        p.setup=()=>{
+          const h=Math.max(320,PAD*2+BARH*data.length+(data.length-1)*6);
+          const cnv=p.createCanvas(600,h); cnv.parent(mountId); p.noLoop();
+        };
+        p.draw=()=>{
+          p.background('#0b0f16'); p.noStroke();
+          const max=Math.max(...data.map(d=>d.score),0.0001);
+          const W=p.width-2*PAD-120; let y=PAD+8;
+          p.textSize(13);
+          data.forEach(d=>{
+            const w=W*(d.score/max);
+            p.fill(palette==='A'?'#7aa2ff':'#ffa97a'); p.rect(PAD,y-10,w,20,6);
+            p.fill('#d8e6ff'); p.text(d.term,PAD+w+8,y);
+            p.fill('#91a8c9'); p.text(d.score.toFixed(3),PAD+w-40,y);
+            y+=BARH+6;
+          });
+        };
+      }
+    }
+
+    function bubbleSketchFactory(data){
+      return (p)=>{
+        p.setup=()=>{const cnv=p.createCanvas(600,360); cnv.parent('p5c'); p.noLoop();};
+        p.draw=()=>{
+          p.background('#0b0f16'); p.noStroke();
+          const cx=p.width/2, cy=60, w=420, h=18;
+          // meter
+          p.fill('#1a2230'); p.rect(cx-w/2,cy,w,h,10);
+          p.fill('#7affc1'); p.rect(cx-w/2,cy,w*(data.similarity??0),h,10);
+          p.fill('#cfe1ff'); p.textAlign(p.CENTER,p.CENTER); p.textSize(14);
+          p.text(`유사도: ${(data.similarity??0).toFixed(3)}`, cx, cy-14);
+
+          // tokens (좌/중앙/우)
+          const left=120, right=p.width-120, top=140;
+          const common=data.common.slice(0,18);
+          const uniqA=data.uniqA.slice(0,14);
+          const uniqB=data.uniqB.slice(0,14);
+          p.textSize(13);
+
+          p.fill('#7aa2ff');
+          uniqA.forEach((t,i)=>{const x=left-50+(i%7)*18, y=top+Math.floor(i/7)*30; p.circle(x,y,10); p.fill('#bcd0ff'); p.text(t,x+10,y-1); p.fill('#7aa2ff');});
+
+          p.fill('#7affc1');
+          common.forEach((t,i)=>{const x=cx-80+(i%9)*18, y=top+Math.floor(i/9)*30; p.circle(x,y,10); p.fill('#d2ffea'); p.text(t,x+10,y-1); p.fill('#7affc1');});
+
+          p.fill('#ffa97a');
+          uniqB.forEach((t,i)=>{const x=right-180+(i%7)*18, y=top+Math.floor(i/7)*30; p.circle(x,y,10); p.fill('#ffd9c7'); p.text(t,x+10,y-1); p.fill('#ffa97a');});
+
+          p.fill('#91a8c9'); p.textAlign(p.LEFT,p.CENTER); p.text('A 고유', 28, top-40);
+          p.textAlign(p.CENTER,p.CENTER); p.text('공유', cx, top-40);
+          p.textAlign(p.RIGHT,p.CENTER); p.text('B 고유', p.width-28, top-40);
+        };
+      }
+    }
+
+    /* ========== 5) YouTube 데이터 수집 ========== */
+    async function fetchYTComments(videoId, apiKey, maxResults=200){
+      const base='https://www.googleapis.com/youtube/v3/commentThreads';
+      let pageToken=''; const texts=[];
+      while(texts.length<maxResults){
+        const params=new URLSearchParams({key:apiKey, part:'snippet', videoId, maxResults:'100', order:'relevance'});
+        if(pageToken) params.set('pageToken',pageToken);
+        const res=await fetch(`${base}?${params.toString()}`);
+        if(!res.ok) throw new Error('YouTube API 요청 실패: '+res.status);
+        const j=await res.json();
+        (j.items||[]).forEach(it=>{
+          const sn=it.snippet?.topLevelComment?.snippet;
+          if(sn?.textDisplay) texts.push(sn.textDisplay.replace(/<[^>]+>/g,' '));
+        });
+        if(!j.nextPageToken) break; pageToken=j.nextPageToken;
+      }
+      return texts.slice(0,maxResults);
+    }
+
+    /* ========== 6) 분석 파이프라인 ========== */
+    async function analyzeFromArrays(arrA,arrB,topK=25){
+      const gram=parseInt(document.getElementById('gram').value||'2',10);
+      const stopLevel=parseInt(document.getElementById('stopLevel').value||'1',10);
+      const alpha=Number(document.getElementById('alpha').value||'0.70');
+
+      const tokensA=arrA.flatMap(s=>tokenizeWithControls(s,stopLevel,gram));
+      const tokensB=arrB.flatMap(s=>tokenizeWithControls(s,stopLevel,gram));
+
+      const {vocab,vecA,vecB}=tfidfTwoDocs(tokensA,tokensB);
+      const cos=cosine(vecA,vecB);
+
+      const topA=topKFromVector(vocab,vecA,topK);
+      const topB=topKFromVector(vocab,vecB,topK);
+      const setA=new Set(topA.map(d=>d.term)), setB=new Set(topB.map(d=>d.term));
+
+      const jac=jaccard(setA,setB);
+      const bm=bm25TwoDocs(tokensA,tokensB);
+
+      const sim = alpha*cos + (1-alpha)*((jac+bm)/2);
+
+      const common=[...setA].filter(x=>setB.has(x));
+      const uniqA=[...setA].filter(x=>!setB.has(x));
+      const uniqB=[...setB].filter(x=>!setA.has(x));
+
+      renderCharts({topA, topB, common, uniqA, uniqB, sim, cos, jac, bm, alpha});
+    }
+
+    function renderCharts({topA, topB, common, uniqA, uniqB, sim, cos, jac, bm, alpha}){
+      // 메타 텍스트
+      const fmt=(arr)=>arr.map(d=>`${d.term}(${d.score.toFixed(2)})`).join(' · ');
+      document.getElementById('metaA').innerHTML=`상위: ${fmt(topA)}`;
+      document.getElementById('metaB').innerHTML=`상위: ${fmt(topB)}`;
+      document.getElementById('metaC').innerHTML=
+        `공유: ${common.slice(0,12).join(', ')}<br/>A 고유: ${uniqA.slice(0,12).join(', ')}<br/>B 고유: ${uniqB.slice(0,12).join(', ')}<br/><br/>혼합 유사도: <b>${sim.toFixed(3)}</b>`;
+
+      // 설명
+      document.getElementById('explain').innerHTML =
+        `혼합 = α·Cos(${cos.toFixed(3)}) + (1-α)·Avg(Jaccard ${jac.toFixed(3)}, BM25 ${bm.toFixed(3)})<br/>`+
+        `현재 α = <b>${alpha.toFixed(2)}</b> (↑ TF-IDF 비중 높음). n-gram/불용어 강도를 조정해 민감도를 튜닝할 수 있어요.`;
+
+      // 캔버스 리셋 후 그리기
+      ['p5a','p5b','p5c'].forEach(id=>{ document.getElementById(id).innerHTML=''; });
+      new p5(barSketchFactory(topA,'p5a','A'));
+      new p5(barSketchFactory(topB,'p5b','B'));
+      new p5(bubbleSketchFactory({common, uniqA, uniqB, similarity:sim}));
+    }
+
+    /* ========== 7) 이벤트 ========== */
+    document.getElementById('btnFetch').addEventListener('click', async ()=>{
+      const status=document.getElementById('status');
+      const apiKey=document.getElementById('apiKey').value.trim();
+      const vidA=document.getElementById('vidA').value.trim();
+      const vidB=document.getElementById('vidB').value.trim();
+      const maxC=parseInt(document.getElementById('maxComments').value||'200',10);
+      const topK=parseInt(document.getElementById('topK').value||'25',10);
+
+      if(!apiKey){
+        status.innerHTML='<span class="pill err">API 키가 필요합니다 (아래 JSON 붙여넣기 사용 가능)</span>';
+        return;
+      }
+      status.textContent='YouTube API에서 댓글 수집 중…';
+      try{
+        const [arrA,arrB]=await Promise.all([
+          fetchYTComments(vidA,apiKey,maxC),
+          fetchYTComments(vidB,apiKey,maxC)
+        ]);
+        status.innerHTML=`<span class="pill ok">수집 완료</span> A:${arrA.length} / B:${arrB.length} — 분석 중…`;
+        await analyzeFromArrays(arrA,arrB,topK);
+        status.innerHTML=`<span class="pill ok">분석 완료</span> A:${arrA.length} / B:${arrB.length}`;
+      }catch(e){
+        status.innerHTML=`<span class="pill err">오류</span> ${e.message}`;
+      }
+    });
+
+    document.getElementById('btnAnalyzePasted').addEventListener('click', async ()=>{
+      const status=document.getElementById('status');
+      const topK=parseInt(document.getElementById('topK').value||'25',10);
+      try{
+        const arrA=JSON.parse(document.getElementById('jsonA').value||'[]');
+        const arrB=JSON.parse(document.getElementById('jsonB').value||'[]');
+        if(!Array.isArray(arrA)||!Array.isArray(arrB)) throw new Error('JSON 배열이어야 합니다.');
+        status.textContent='붙여넣은 댓글 분석 중…';
+        await analyzeFromArrays(arrA,arrB,topK);
+        status.innerHTML=`<span class="pill ok">분석 완료</span> A:${arrA.length} / B:${arrB.length}`;
+      }catch(e){
+        status.innerHTML=`<span class="pill err">오류</span> ${e.message}`;
+      }
+    });
+
+    /* ========== 8) 데모용 기본 값(빈 화면 방지) ========== */
+    // A: (예시) DEAN 댓글
+    document.getElementById('jsonA').value = JSON.stringify([
+      "8년전 노래인데도 불구하고 요즘 나오는 곡들이랑 꿀리지 않고 오히려 세련된 게 진짜 딘은 레전드",
+      "가슴이 웅장하다… 딘은 전설",
+      "이 곡은 아직도 세련됐네 제발 정규 좀",
+      "His vocals are no joke",
+      "4년이 지났는데도 너무 좋다",
+      "노래가 진짜 맛있어",
+      "세계관 최강 알앤비",
+      "역사에 남을 개명곡"
+    ], null, 2);
+
+    // B: (예시) 쏜애플 ‘시퍼런 봄’ 느낌의 댓글
+    document.getElementById('jsonB').value = JSON.stringify([
+      "가사 한 줄 한 줄이 마음에 파고든다 듣다 보면 눈물이 난다",
+      "쏜애플 특유의 서정과 폭발 보컬이 압도적",
+      "봄인데 따뜻하기보다 차갑고 날카로워서 더 좋다",
+      "라이브에서 들었을 때 전율",
+      "잔잔하다가 후반부 기타 몰아치는 부분 소름",
+      "사랑 노래라기보다 상실과 고독을 노래하는 듯해서 깊다",
+      "차 안에서 혼자 들으면 세상이 멈춘 기분",
+      "목소리에 실린 절규가 진짜라 가슴이 먹먹해진다",
+      "이런 곡은 시간이 지나도 퇴색되지 않을 명곡"
+    ], null, 2);
+  </script>
+</body>
+</html>
