@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>댓글 유사성 기반 음악 추천 — p5.js 데모</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- p5.js -->
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.2/lib/p5.min.js"></script>
+  <style>
+    :root { --bg:#0b0d10; --fg:#e9eef5; --muted:#9fb0c7; --accent:#7aa2ff; --accent2:#ffa97a; }
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,Segoe UI,Apple SD Gothic Neo,Apple Color Emoji,Arial,Helvetica,sans-serif}
+    header{padding:16px 20px;border-bottom:1px solid #1b2027}
+    h1{font-size:18px;margin:0 0 6px}
+    .sub{color:var(--muted);font-size:13px}
+    main{display:grid;grid-template-columns:380px 1fr;gap:0}
+    aside{border-right:1px solid #1b2027;height:calc(100vh - 68px);overflow:auto;padding:14px 16px}
+    section{height:calc(100vh - 68px);overflow:auto}
+    label{font-size:12px;color:var(--muted);display:block;margin:14px 0 6px}
+    input,textarea,button{width:100%;box-sizing:border-box;border-radius:10px;border:1px solid #2a3240;background:#131820;color:var(--fg);padding:10px 12px;font-size:13px;outline:none}
+    input::placeholder,textarea::placeholder{color:#62728a}
+    textarea{min-height:72px;resize:vertical}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .btn{cursor:pointer;border:1px solid #334156;background:linear-gradient(#1a2230,#141b27);transition:transform .05s}
+    .btn:hover{transform:translateY(-1px)}
+    .small{font-size:12px;color:#8aa0be;margin-top:6px}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #2a3240;margin:4px 6px 0 0;font-size:12px}
+    .ok{color:#81fbb8;border-color:#17442b;background:#0f1f19}
+    .warn{color:#ffd18a;border-color:#4a3820;background:#1d170f}
+    .err{color:#ff8aa0;border-color:#4a2030;background:#1d0f15}
+    .cards{display:grid;grid-template-columns:repeat(2,minmax(360px,1fr));gap:12px;padding:12px}
+    .card{background:#0f141c;border:1px solid #1f2733;border-radius:16px;overflow:hidden}
+    .card h3{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid #1b2027;color:#cfe1ff}
+    canvas{display:block}
+    .meta{padding:10px 14px;border-top:1px solid #1b2027;color:#a9bad2;font-size:12px}
+    .hl{color:#cfe1ff}
+    .list{padding:8px 14px 14px;font-size:13px;line-height:1.8;color:#cfd8e6}
+    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;color:#bcd0ff}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>댓글 유사성 기반 음악 비교 (p5.js)</h1>
+    <div class="sub">두 영상의 <b>댓글 텍스트</b>에서 키워드/감정을 추출하고, TF-IDF→코사인 유사도로 <b>유사도</b>와 <b>차별 키워드</b>를 시각화합니다.</div>
+  </header>
+
+  <main>
+    <aside>
+      <label>유튜브 Data API 키 (선택)</label>
+      <input id="apiKey" placeholder="없으면 비워두고 아래에 댓글 JSON을 붙여넣어도 됩니다. (HTTP referrer: localhost 권장)" />
+
+      <div class="row">
+        <div>
+          <label>영상 A ID</label>
+          <input id="vidA" value="JeVmk6SAMvA" />
+          <div class="small">예: https://www.youtube.com/watch?v=<span class="kbd">JeVmk6SAMvA</span></div>
+        </div>
+        <div>
+          <label>영상 B ID</label>
+          <input id="vidB" value="wzvRxguTPa4" />
+          <div class="small">예: https://www.youtube.com/watch?v=<span class="kbd">wzvRxguTPa4</span></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="btnFetch" class="btn">🔎 API로 댓글 가져오기 & 분석</button>
+        <button id="btnAnalyzePasted" class="btn">📝 붙여넣은 댓글로 분석</button>
+      </div>
+
+      <label>붙여넣기(선택) — 댓글 텍스트 배열(JSON) A</label>
+      <textarea id="jsonA" placeholder='예: ["밤에 에세이 쓸 때 딱 좋다","도시 불빛 보면서 걷는 느낌"]'></textarea>
+
+      <label>붙여넣기(선택) — 댓글 텍스트 배열(JSON) B</label>
+      <textarea id="jsonB" placeholder='예: ["집중할 때 좋음","반복 리듬이 흐름을 만들어줌"]'></textarea>
+
+      <div class="small">※ API 없이도 동작: 위 칸에 <b>문자열 배열(JSON)</b>로 댓글을 넣고 “붙여넣은 댓글로 분석”을 누르세요.</div>
+
+      <label>옵션</label>
+      <div class="row">
+        <div><input id="maxComments" type="number" value="200" /><div class="small">가져올 댓글 수(각 영상)</div></div>
+        <div><input id="topK" type="number" value="12" /><div class="small">상위 키워드 개수</div></div>
+      </div>
+
+      <div id="status" class="small" style="margin-top:12px"></div>
+      <div style="margin-top:10px">
+        <span class="pill ok">TF-IDF</span>
+        <span class="pill ok">Cosine similarity</span>
+        <span class="pill warn">한국어+영어 간이 불용어 처리</span>
+        <span class="pill warn">데모용 간이 토크나이저</span>
+      </div>
+
+      <div class="list" style="margin-top:14px">
+        <div><b>팁</b></div>
+        <div>• API키 없이도 되지만, 실제 과제 시 <span class="kbd">commentThreads</span> 엔드포인트 사용 권장.</div>
+        <div>• 카드 하단에 상위 키워드/공유·고유 키워드/유사도(0~1) 표시.</div>
+        <div>• p5 캔버스는 막대/버블 그래프를 그립니다.</div>
+      </div>
+    </aside>
+
+    <section>
+      <div class="cards">
+        <div class="card">
+          <h3>영상 A — 키워드 점수 Top-K</h3>
+          <div id="p5a"></div>
+          <div class="meta" id="metaA"></div>
+        </div>
+        <div class="card">
+          <h3>영상 B — 키워드 점수 Top-K</h3>
+          <div id="p5b"></div>
+          <div class="meta" id="metaB"></div>
+        </div>
+        <div class="card">
+          <h3>공유/고유 키워드 & 유사도</h3>
+          <div id="p5c"></div>
+          <div class="meta" id="metaC"></div>
+        </div>
+        <div class="card">
+          <h3>설명 가능성(Why recommended?)</h3>
+          <div class="list" id="explain"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // --------- 간단 유틸 ----------
+    const koStop = new Set("그리고 그러나 그래서 또한 혹은 또는 그러나 하지만 너무 아주 정말 매우 진짜 그냥 약간 좀 정말로 정말임 이런 그런 저런 또한 또한또한 또한또 또한요 것 것들 등 등등 보다 보다도 보다도요 및 와 과 하고 에서 으로 으로의 은 는 이 가 를 에 의 도 만 로 에게 한 다른 같은 함께 위해 때 때는 또 또다시 다시 다시한번 좀더 더욱 매우 가장 만큼 만큼의 이런저런 거의 별로 전혀 뭐 뭐랄까 사실 약간은 은근 살짝 그냥요".split(" "));
+    const enStop = new Set("a an the is are was were be been being to of in for on with as at by and or but so if while than then too very really just only more most less least over under into out up down from this that these those i me my we our you your he she it they them his her its their not no do does did doing done have has had having".split(" "));
+
+    function tokenize(s){
+      return s
+        .toLowerCase()
+        .replace(/https?:\/\/\S+/g,' ')
+        .replace(/[^\p{L}\p{N}\s]/gu,' ')
+        .split(/\s+/)
+        .map(t=>t.trim())
+        .filter(t=>t.length>=2 && !koStop.has(t) && !enStop.has(t));
+    }
+
+    function tfidf(corpus){ // corpus: Array<Array<string>> (문서=댓글 배열 하나가 "문서"로 취급됨)
+      const N = corpus.length;
+      const df = new Map();
+      const tfs = corpus.map(tokens=>{
+        const m = new Map();
+        tokens.forEach(t=>m.set(t,(m.get(t)||0)+1));
+        m.forEach((v,k)=>df.set(k,(df.get(k)||0)+1));
+        return m;
+      });
+      const idf = new Map();
+      df.forEach((d,term)=>idf.set(term, Math.log((1+N)/(1+d)) + 1));
+      // 벡터화
+      const vocab = Array.from(df.keys()).sort();
+      const vectors = tfs.map(m=>{
+        const arr = new Float32Array(vocab.length);
+        let maxf = 0; m.forEach(v=>{ if(v>maxf) maxf=v; });
+        vocab.forEach((term, i)=>{
+          const f = m.get(term)||0;
+          const tf = maxf ? (0.5 + 0.5*(f/maxf)) : 0; // normalized tf
+          arr[i] = tf * (idf.get(term)||0);
+        });
+        return arr;
+      });
+      return {vocab, idf, vectors};
+    }
+
+    function sumVectors(vecs){
+      if(!vecs.length) return new Float32Array(0);
+      const out = new Float32Array(vecs[0].length);
+      vecs.forEach(v=>{ for(let i=0;i<v.length;i++) out[i]+=v[i]; });
+      // L2 normalize
+      let norm=0; for(let i=0;i<out.length;i++) norm+=out[i]*out[i];
+      norm = Math.sqrt(norm)||1;
+      for(let i=0;i<out.length;i++) out[i]/=norm;
+      return out;
+    }
+
+    function cosine(a,b){
+      let s=0;
+      const n = Math.min(a.length,b.length);
+      for(let i=0;i<n;i++) s+=a[i]*b[i];
+      return Math.max(0, Math.min(1, s)); // 0~1로 클램프
+    }
+
+    function topKFromVector(vocab, vec, k=12){
+      const arr = vocab.map((t,i)=>({term:t,score:vec[i]}));
+      arr.sort((x,y)=>y.score-x.score);
+      return arr.slice(0,k).filter(d=>d.score>0);
+    }
+
+    // --------- 시각화(p5) ----------
+    function barSketchFactory(data, palette='A'){
+      return (p)=>{
+        const PAD = 18, BARH = 22;
+        p.setup = ()=>{
+          const h = Math.max(320, PAD*2 + BARH*data.length + (data.length-1)*6);
+          const cnv = p.createCanvas(600, h);
+          cnv.parent(data.mountId);
+          p.noLoop();
+        };
+        p.draw = ()=>{
+          p.background('#0b0f16');
+          p.noStroke();
+          p.fill('#cfe1ff');
+          p.textSize(13);
+          p.textAlign(p.LEFT,p.CENTER);
+          const max = Math.max( ...data.map(d=>d.score) , 0.0001);
+          const W = p.width - 2*PAD - 120;
+          let y = PAD+8;
+          data.forEach((d,idx)=>{
+            const w = W * (d.score/max);
+            // bar
+            p.fill(palette==='A'?'#7aa2ff':'#ffa97a');
+            p.rect(PAD, y-10, w, 20, 6);
+            // label
+            p.fill('#d8e6ff');
+            p.text(d.term, PAD + w + 8, y);
+            // score
+            p.fill('#91a8c9');
+            p.text(d.score.toFixed(3), PAD + w - 40, y);
+            y += BARH + 6;
+          });
+        };
+      }
+    }
+
+    function bubbleSketchFactory(data){
+      return (p)=>{
+        p.setup = ()=>{
+          const cnv = p.createCanvas(600, 360);
+          cnv.parent('p5c');
+          p.noLoop();
+        };
+        p.draw = ()=>{
+          p.background('#0b0f16');
+          const centerX = p.width/2;
+          const centerY = 60;
+          p.noStroke();
+          // similarity meter
+          const sim = data.similarity ?? 0;
+          const w = 420, h = 18;
+          p.fill('#1a2230'); p.rect(centerX - w/2, centerY, w, h, 10);
+          p.fill('#7affc1'); p.rect(centerX - w/2, centerY, w*sim, h, 10);
+          p.fill('#cfe1ff'); p.textAlign(p.CENTER,p.CENTER); p.textSize(14);
+          p.text(`유사도 (cosine): ${sim.toFixed(3)}`, centerX, centerY - 14);
+
+          // venn-like dots
+          const left = 140, right = p.width-140, top = 140;
+          const common = data.common.slice(0,18);
+          const uniqA = data.uniqA.slice(0,14);
+          const uniqB = data.uniqB.slice(0,14);
+
+          p.textSize(13);
+          // Uniq A
+          p.fill('#7aa2ff');
+          uniqA.forEach((t,i)=>{
+            const x = left - 60 + (i%7)*18;
+            const y = top + Math.floor(i/7)*30;
+            p.circle(x, y, 10);
+            p.fill('#bcd0ff'); p.text(t, x+10, y-1); p.fill('#7aa2ff');
+          });
+
+          // Common
+          p.fill('#7affc1');
+          common.forEach((t,i)=>{
+            const x = centerX - 80 + (i%9)*18;
+            const y = top + Math.floor(i/9)*30;
+            p.circle(x, y, 10);
+            p.fill('#d2ffea'); p.text(t, x+10, y-1); p.fill('#7affc1');
+          });
+
+          // Uniq B
+          p.fill('#ffa97a');
+          uniqB.forEach((t,i)=>{
+            const x = right - 200 + (i%7)*18;
+            const y = top + Math.floor(i/7)*30;
+            p.circle(x, y, 10);
+            p.fill('#ffd9c7'); p.text(t, x+10, y-1); p.fill('#ffa97a');
+          });
+
+          // titles
+          p.fill('#91a8c9');
+          p.textAlign(p.LEFT,p.CENTER);
+          p.text('A 고유', 40, top-40);
+          p.textAlign(p.CENTER,p.CENTER);
+          p.text('공유', centerX, top-40);
+          p.textAlign(p.RIGHT,p.CENTER);
+          p.text('B 고유', p.width-40, top-40);
+        };
+      }
+    }
+
+    // --------- 데이터 수집 ----------
+    async function fetchYTComments(videoId, apiKey, maxResults=200){
+      // commentThreads: top-level + 일부 replies (pageToken 반복)
+      const base = 'https://www.googleapis.com/youtube/v3/commentThreads';
+      let pageToken = '';
+      const texts = [];
+      while(texts.length < maxResults){
+        const params = new URLSearchParams({
+          key: apiKey,
+          part: 'snippet',
+          videoId,
+          maxResults: '100',
+          order: 'relevance'
+        });
+        if(pageToken) params.set('pageToken', pageToken);
+        const url = `${base}?${params.toString()}`;
+        const res = await fetch(url);
+        if(!res.ok){ throw new Error('YouTube API 요청 실패: '+res.status); }
+        const j = await res.json();
+        (j.items||[]).forEach(it=>{
+          const sn = it.snippet.topLevelComment.snippet;
+          if(sn && sn.textDisplay){
+            texts.push(
+              // HTML 엔티티/태그 제거
+              sn.textDisplay.replace(/<[^>]+>/g,' ')
+            );
+          }
+        });
+        if(!j.nextPageToken) break;
+        pageToken = j.nextPageToken;
+      }
+      return texts.slice(0,maxResults);
+    }
+
+    // --------- 파이프라인 ----------
+    async function analyzeFromArrays(arrA, arrB, topK=12){
+      const docsA = arrA.map(tokenize);
+      const docsB = arrB.map(tokenize);
+      const allDocs = docsA.concat(docsB);
+
+      const {vocab, vectors} = tfidf(allDocs);
+      const vecA = sumVectors(vectors.slice(0, docsA.length));
+      const vecB = sumVectors(vectors.slice(docsA.length));
+      const sim = cosine(vecA, vecB);
+
+      const topA = topKFromVector(vocab, vecA, topK);
+      const topB = topKFromVector(vocab, vecB, topK);
+
+      // 공유/고유 키워드
+      const setA = new Set(topA.map(d=>d.term));
+      const setB = new Set(topB.map(d=>d.term));
+      const common = [...setA].filter(x=>setB.has(x));
+      const uniqA  = [...setA].filter(x=>!setB.has(x));
+      const uniqB  = [...setB].filter(x=>!setA.has(x));
+
+      // 설명문
+      const explain = [];
+      if(common.length) explain.push(`두 영상은 <span class="hl">${common.slice(0,6).join(', ')}</span> 같은 맥락(댓글 키워드)을 공유합니다.`);
+      if(uniqA.length) explain.push(`영상 A만의 톤/상황: <span class="hl">${uniqA.slice(0,8).join(', ')}</span>`);
+      if(uniqB.length) explain.push(`영상 B만의 톤/상황: <span class="hl">${uniqB.slice(0,8).join(', ')}</span>`);
+      explain.push(`→ 이 유사도는 <b>댓글 텍스트</b> 기준이므로, 청취 로그나 오디오 피처와는 독립적인 맥락 추천 근거가 됩니다.`);
+
+      // 렌더
+      renderCharts({topA, topB, common, uniqA, uniqB, sim});
+      document.getElementById('explain').innerHTML = explain.join('<br/>');
+    }
+
+    function renderCharts({topA, topB, common, uniqA, uniqB, sim}){
+      // 카드 메타
+      const fmt = (arr)=>arr.map(d=>`${d.term}(${d.score.toFixed(2)})`).join(' · ');
+      document.getElementById('metaA').innerHTML = `상위 키워드: ${fmt(topA)}`;
+      document.getElementById('metaB').innerHTML = `상위 키워드: ${fmt(topB)}`;
+      document.getElementById('metaC').innerHTML = `공유: ${common.slice(0,12).join(', ')}<br/>A 고유: ${uniqA.slice(0,12).join(', ')}<br/>B 고유: ${uniqB.slice(0,12).join(', ')}<br/><br/>유사도: <b>${sim.toFixed(3)}</b>`;
+
+      // 기존 캔버스 제거 후 재생성
+      ['p5a','p5b','p5c'].forEach(id=>{ document.getElementById(id).innerHTML=''; });
+
+      // p5 인스턴스
+      new p5(barSketchFactory(topA,'A'), 'p5a');
+      new p5(barSketchFactory(topB,'B'), 'p5b');
+      new p5(bubbleSketchFactory({common, uniqA, uniqB, similarity:sim}), 'p5c');
+    }
+
+    // --------- 이벤트 바인딩 ----------
+    document.getElementById('btnFetch').addEventListener('click', async ()=>{
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const vidA = document.getElementById('vidA').value.trim();
+      const vidB = document.getElementById('vidB').value.trim();
+      const maxC = parseInt(document.getElementById('maxComments').value||'200',10);
+      const topK = parseInt(document.getElementById('topK').value||'12',10);
+      const status = document.getElementById('status');
+
+      if(!apiKey){ status.innerHTML = '<span class="pill err">API 키가 필요합니다 (또는 아래 JSON 붙여넣기 사용)</span>'; return; }
+      status.textContent = 'YouTube API에서 댓글 수집 중…';
+
+      try{
+        const [arrA, arrB] = await Promise.all([
+          fetchYTComments(vidA, apiKey, maxC),
+          fetchYTComments(vidB, apiKey, maxC)
+        ]);
+        status.innerHTML = `<span class="pill ok">가져옴</span> A:${arrA.length}개 / B:${arrB.length}개 — 분석 중…`;
+        await analyzeFromArrays(arrA, arrB, topK);
+        status.innerHTML = `<span class="pill ok">완료</span> A:${arrA.length}개 / B:${arrB.length}개`;
+      }catch(e){
+        status.innerHTML = `<span class="pill err">오류</span> ${e.message}`;
+      }
+    });
+
+    document.getElementById('btnAnalyzePasted').addEventListener('click', async ()=>{
+      const topK = parseInt(document.getElementById('topK').value||'12',10);
+      const status = document.getElementById('status');
+      try{
+        const arrA = JSON.parse(document.getElementById('jsonA').value||'[]');
+        const arrB = JSON.parse(document.getElementById('jsonB').value||'[]');
+        if(!Array.isArray(arrA)||!Array.isArray(arrB)) throw new Error('JSON 배열 형태여야 합니다.');
+        status.textContent = '붙여넣은 댓글 분석 중…';
+        await analyzeFromArrays(arrA, arrB, topK);
+        status.innerHTML = `<span class="pill ok">완료</span> A:${arrA.length}개 / B:${arrB.length}개`;
+      }catch(e){
+        status.innerHTML = `<span class="pill err">오류</span> ${e.message}`;
+      }
+    });
+
+    // --------- 데모용 샘플 (빈 화면 방지) ---------
+    document.getElementById('jsonA').value = JSON.stringify([
+      "밤에 에세이 쓸 때 듣기 좋아요. 마음이 차분해짐",
+      "도시 불빛 보면서 산책하는 기분… 몽환적",
+      "가사 없이 흐르는 멜로디가 포근함"
+    ], null, 2);
+    document.getElementById('jsonB').value = JSON.stringify([
+      "리듬이 반복돼서 집중 잘 됨, 딥워크할 때 추천",
+      "에릭 벨린저 훅이 중독성 있어요",
+      "마감 전에 에너지 올릴 때 듣는 곡"
+    ], null, 2);
+  </script>
+</body>
+</html>
